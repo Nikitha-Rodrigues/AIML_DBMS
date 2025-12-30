@@ -1,0 +1,403 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Covert Channel Demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root{
+      --bg: #eafaf0; /* pastel green */
+      --panel: #ffffff;
+      --text: #000000; /* black */
+      --accent: #2b7a4b; /* darker green */
+      --radius:8px;
+      --pad:12px;
+    }
+    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:var(--text);background:var(--bg)}
+    .container{max-width:1100px;margin:28px auto;padding:18px}
+    header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    h1{margin:0;font-size:20px;color:var(--accent)}
+    h3{margin:8px 0;color:var(--text)}
+    .card{background:var(--panel);border-radius:var(--radius);padding:var(--pad);border:1px solid rgba(0,0,0,0.06)}
+    button{background:var(--accent);border:none;color:white;padding:8px 12px;border-radius:6px;cursor:pointer;font-weight:600}
+    button.secondary{background:transparent;border:1px solid rgba(0,0,0,0.06);color:var(--text)}
+    input,select{padding:8px;border-radius:6px;border:1px solid rgba(0,0,0,0.06);background:transparent;color:var(--text)}
+    pre{background:#f9fff7;padding:12px;border-radius:6px;overflow:auto;white-space:pre-wrap;color:var(--text);margin:0}
+    .row{margin-bottom:12px}
+    .col{display:inline-block;vertical-align:top;margin-right:20px}
+    label{display:block;font-size:13px;color:var(--text);margin-top:6px}
+    .two-col{display:flex;gap:18px;margin-top:12px}
+    .panel{flex:1}
+    footer{margin-top:18px;color:var(--text);font-size:13px}
+    @media(max-width:860px){.two-col{flex-direction:column}.col{display:block;margin-right:0}}
+
+    /* Added styles for login and button descriptions */
+    .desc{font-size:12px;color:#3b4b3f;margin-top:6px;max-width:320px}
+    #loginCard{background:linear-gradient(180deg,#ffffff, #f2fff5);padding:18px;border-radius:10px;margin-bottom:12px;border:1px solid rgba(0,0,0,0.06)}
+    #authLogout{display:none}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Covert Channel Demo</h1>
+        
+      <div style="text-align:right">
+        <div id="authArea" style="font-size:13px;color:var(--text)">Local demo&nbsp;&nbsp;<button id="authLogout" class="secondary" onclick="doLogout()">Logout</button></div>
+      </div>
+    </header>
+
+    <!-- Login card (shown first if not authenticated) -->
+    <div id="loginCard" class="card" style="display:none">
+      <h3>Authentication</h3>
+      <div class="row">
+        <label>Username: <input id="loginUsername" type="text" value=""></label>
+        <label>Password: <input id="loginPassword" type="password" value=""></label>
+        <div style="margin-top:8px">
+          <button onclick="doLogin()">Login</button>
+          <span id="loginMessage" style="margin-left:12px;color:#a33;font-size:13px"></span>
+        </div>
+      </div>
+      <div style="font-size:13px;color:#444;margin-top:8px">You must authenticate before using the controls below. Uses session-based login (server enforces credentials).</div>
+    </div>
+
+    <div id="controlsCard" class="card">
+      <div class="row">
+        <div class="col" style="min-width:240px">
+          <h3>SQL</h3>
+          <button onclick="fetchSummary()">System Summary</button>
+          <div class="desc">Show counts of attacks, packets and flows (SQL) and summary counts from Mongo.</div>
+          <button onclick="fetchLatest()">Latest Attacks</button>
+          <div class="desc">Fetch the most recent attack records (use the Limit field to adjust how many).</div>
+          <label>Limit: <input id="latestLimit" type="number" value="20" min="1" style="width:80px"></label>
+          <br>
+          <label>Attacks by Field</label>
+          <select id="fieldSelect">
+            <option value="">Summary (all fields)</option>
+            <option value="IPID">IPID</option>
+            <option value="seq">seq</option>
+            <option value="ack">ack</option>
+            <option value="tcp_window">tcp_window</option>
+            <option value="header_flags">header_flags</option>
+          </select>
+          <div class="desc">Group attacks by the modified field. Select a field and click Run to see detailed attack rows for that field.</div>
+          <label>Detail limit: <input id="fieldLimit" type="number" value="200" min="1" style="width:80px"></label>
+          <button onclick="fetchAttacksByField()">Run</button>
+          <button onclick="fetchFlowSummary()">Flow Summary</button>
+          <div class="desc">Show a table of flows (top flows by packet count). Columns adapt to your DB schema.</div>
+          <br>
+          <label>Flow ID: <input id="flowId" type="text" style="width:160px"></label>
+          <button onclick="fetchPacketsInFlow()">Packets in Flow</button>
+          <div class="desc">List packets belonging to a flow (enter a Flow ID). Adapts to varying packet table column names.</div>
+          <button onclick="fetchIPIDDist()">IPID Distribution</button>
+          <div class="desc">Show distribution of IPID values for the specified flow (counts by IPID).</div>
+        </div>
+
+        <div class="col" style="min-width:240px">
+          <h3>Mongo</h3>
+          <button onclick="fetchVulns()">Vulnerabilities</button>
+          <div class="desc">List seeded vulnerabilities stored in MongoDB (name, severity, short description).</div>
+          <button onclick="fetchMongoAttacks()">Mongo: Attacks with Vulnerability</button>
+          <div class="desc">Show attacks stored in Mongo, joined with vulnerability documents (uses aggregation pipeline).</div>
+          <label>Mongo Limit: <input id="mongoLimit" type="number" value="100" min="1" style="width:80px"></label>
+        </div>
+
+        <div class="col" style="min-width:240px">
+          <h3>Detailed</h3>
+          <label>Packet ID: <input id="packetId" type="text" style="width:160px"></label>
+          <button onclick="fetchAttackDetails()">Attack Details</button>
+          <div class="desc">Show joined attack + packet details for a given Packet ID (provides source/dest and timestamp when available).</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel card">
+        <h4 style="margin-top:0;color:var(--text)">User view</h4>
+        <pre id="userView">No actions yet. Use the controls above to inspect data. Messages will be shown here in plain language.</pre>
+      </div>
+      <div class="panel card" id="sqlPanel" style="display:block">
+        <h4 style="margin-top:0;color:var(--text)">Raw output / executed query</h4>
+        <pre id="out">Ready</pre>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const userViewEl = document.getElementById('userView')
+    const outEl = document.getElementById('out')
+
+    function showRaw(obj){
+      if(!outEl) return
+      try{
+        if(obj && typeof obj === 'object'){
+          const parts = []
+          const q = obj.query || obj.sql?.query || obj.pipeline || obj.mongo?.query
+          if(q){
+            parts.push('--- QUERY / PIPELINE ---')
+            parts.push(typeof q === 'string' ? q : JSON.stringify(q, null, 2))
+          }
+          // raw result may be in .result or the object itself
+          const raw = obj.result !== undefined ? obj.result : obj.rows !== undefined ? obj.rows : obj
+          if(raw !== undefined){
+            parts.push('--- RAW RESULT ---')
+            parts.push(typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2))
+          }
+          if(parts.length === 0) parts.push(JSON.stringify(obj, null, 2))
+          outEl.textContent = parts.join('\n\n')
+          return
+        }
+        outEl.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)
+      }catch(e){ outEl.textContent = String(obj) }
+    }
+    function showUser(lines){ userViewEl.textContent = Array.isArray(lines) ? lines.join('\n') : (typeof lines === 'string' ? lines : JSON.stringify(lines, null, 2)) }
+
+    async function call(url){
+      const r = await fetch(url, {credentials: 'include'})
+      return r.ok ? await r.json() : await r.text()
+    }
+
+    function humanTime(ts){ try{ const n = Number(ts); if(!n) return ts; const d=new Date(n*1000); return d.toLocaleString() }catch(e){return ts} }
+
+    // Render helpers
+    function summaryMsg(data){
+      const s = data.sql && data.sql.result ? data.sql.result : {}
+      const mongo = data.mongo || {}
+      return [
+        `Total attacks: ${s.total_attacks ?? 'N/A'}`,
+        `Total packets: ${s.total_packets ?? 'N/A'}`,
+        `Total flows: ${s.total_flows ?? 'N/A'}`,
+        `Mongo vulnerabilities: ${mongo.vulnerabilities ?? 'N/A'}`,
+        `Mongo attacks: ${mongo.attacks ?? 'N/A'}`
+      ]
+    }
+
+    function attacksToMsgs(rows){
+      if(!rows || !rows.length) return ['No attacks found']
+      return rows.map(r=>{
+        const name = r.AttackName || r.attack_name || 'Attack'
+        const pid = r.PacketID ?? r.packet_id ?? 'unknown'
+        const field = r.ModifiedField || r.modified_field || 'field'
+        const ov = r.OriginalValue ?? r.original_value ?? ''
+        const mv = r.ModifiedValue ?? r.modified_value ?? ''
+        const ts = r.ts ?? r.timestamp ?? ''
+        return `${name} on packet ${pid}: ${field} changed ${ov} → ${mv}${ts ? ' at '+humanTime(ts) : ''}`
+      })
+    }
+
+    function flowsToMsgs(rows){
+      if(!rows || !rows.length) return ['No flows']
+      return rows.map(r=>{
+        const id = r.flow_id ?? r.flowId ?? 'unknown'
+        const src = r.src_ip ?? r.source_ip ?? ''
+        const dst = r.dst_ip ?? r.destination_ip ?? ''
+        const sp = r.src_port ?? r.source_port ?? ''
+        const dp = r.dst_port ?? r.destination_port ?? ''
+        const cnt = r.packet_count ?? r.total_fwd_packets ?? ''
+        return `Flow ${id}: ${src}:${sp} → ${dst}:${dp} — ${cnt} packets`
+      })
+    }
+
+    function packetsToMsgs(rows){
+      if(!rows || !rows.length) return ['No packets']
+      return rows.map(p=>{
+        const id = p.packet_id ?? p.packetId
+        const src = p.src_ip ?? ''
+        const dst = p.dst_ip ?? ''
+        const seq = p.seq ?? ''
+        const ipid = p.IPID ?? p.ipid ?? ''
+        const ack = p.ack ?? ''
+        const win = p.tcp_window ?? p.window ?? ''
+        const ts = p.timestamp ?? ''
+        return `Packet ${id} ${src} → ${dst}${ts ? ' at '+humanTime(ts) : ''} seq=${seq} ipid=${ipid} ack=${ack} win=${win}`
+      })
+    }
+
+    function ipidDistToMsgs(rows){
+      if(!rows || !rows.length) return ['No distribution data']
+      return rows.map(r=>`IPID ${r.value}: ${r.cnt} packets`)
+    }
+
+    function vulnsToMsgs(docs){
+      if(!docs || !docs.length) return ['No vulnerabilities']
+      return docs.map(d=>`${d.name ?? d._id} — ${d.severity ?? 'Unknown'}${d.description ? ': '+d.description : ''}`)
+    }
+
+    function mongoAttacksToMsgs(docs){
+      if(!docs || !docs.length) return ['No attacks in Mongo']
+      return docs.map(d=>{
+        const name = d.attack_name ?? 'Attack'
+        const mf = d.modified_field ?? 'field'
+        const mv = d.modified_value ?? ''
+        const ov = d.original_value ?? ''
+        const pid = d.packet_id ?? ''
+        const vuln = d.vuln && d.vuln.name ? ` — ${d.vuln.name} (${d.vuln.severity ?? 'Unknown'})` : ''
+        return `${name} on packet ${pid}: ${mf} ${ov} → ${mv}${vuln}`
+      })
+    }
+
+    // Endpoints
+    async function fetchSummary(){
+      showUser(['Loading...'])
+      const data = await call('/api/summary')
+      if(data.error){ showRaw(data); showUser([data.error]); return }
+      showRaw(data)
+      showUser(summaryMsg(data))
+    }
+
+    async function fetchLatest(){
+      const limit=document.getElementById('latestLimit').value||20
+      showUser(['Loading...'])
+      const data = await call(`/api/sql/latest-attacks?limit=${encodeURIComponent(limit)}`)
+      if(data.error){ showRaw(data); showUser([data.error]); return }
+      showRaw(data)
+      showUser(attacksToMsgs(data.result))
+    }
+
+    async function fetchAttacksByField(){
+      const field = document.getElementById('fieldSelect').value
+      const limit=document.getElementById('fieldLimit').value||200
+      showUser(['Loading...'])
+      const url = field ? `/api/sql/attacks-by-field?field=${encodeURIComponent(field)}&limit=${encodeURIComponent(limit)}` : '/api/sql/attacks-by-field'
+      const data = await call(url)
+      if(data.error){ showRaw(data); showUser([data.error]); return }
+      showRaw(data)
+      if(data.user_view){ // server-provided summaries
+        showUser(data.user_view.map(x=>x.summary))
+      } else if(Array.isArray(data.result)){
+        showUser(data.result.map(r=>`${r.ModifiedField}: ${r.cnt} attacks`))
+      } else {
+        showUser(['No data'])
+      }
+    }
+
+    async function fetchFlowSummary(){
+      showUser(['Loading...'])
+      const data = await call('/api/sql/flow-summary')
+      if(data.error){ showRaw(data); showUser([data.error]); return }
+      showRaw(data)
+      showUser(flowsToMsgs(data.result))
+    }
+
+    async function fetchPacketsInFlow(){
+      const f=document.getElementById('flowId').value
+      if(!f){ showUser(['Please enter flow id']); return }
+      showUser(['Loading...'])
+      const data = await call(`/api/sql/packets-in-flow?flow_id=${encodeURIComponent(f)}`)
+      if(data.error){ showRaw(data); showUser([data.error]); return }
+      showRaw(data)
+      showUser(packetsToMsgs(data.result))
+    }
+
+    async function fetchIPIDDist(){
+      const f=document.getElementById('flowId').value
+      if(!f){ showUser(['Please enter flow id']); return }
+      showUser(['Loading...'])
+      const data = await call(`/api/sql/ipid-distribution?flow_id=${encodeURIComponent(f)}`)
+      if(data.error){ showRaw(data); showUser([data.error]); return }
+      showRaw(data)
+      showUser(ipidDistToMsgs(data.result))
+    }
+
+    async function fetchVulns(){
+      showUser(['Loading...'])
+      const data = await call('/api/mongo/vulnerabilities')
+      if(data.error){ showRaw(data); showUser([data.error]); return }
+      showRaw(data)
+      showUser(vulnsToMsgs(data.result))
+    }
+
+    async function fetchMongoAttacks(){
+      const limit=document.getElementById('mongoLimit').value||100
+      showUser(['Loading...'])
+      const data = await call(`/api/mongo/attacks-with-vuln?limit=${encodeURIComponent(limit)}`)
+      if(data.error){ showRaw(data); showUser([data.error]); return }
+      showRaw(data)
+      showUser(mongoAttacksToMsgs(data.result))
+    }
+
+    async function fetchAttackDetails(){
+      const pid=document.getElementById('packetId').value
+      if(!pid){ showUser(['Please enter packet id']); return }
+      showUser(['Loading...'])
+      const data = await call(`/api/sql/attack-details?packet_id=${encodeURIComponent(pid)}`)
+      if(data.error){ showRaw(data); showUser([data.error]); return }
+      showRaw(data)
+      if(data.result && Object.keys(data.result).length){
+        const r = data.result
+        const lines = []
+        const name = r.AttackName || r.attack_name || 'Attack'
+        const pid = r.PacketID || r.packet_id || ''
+        const mf = r.ModifiedField || 'field'
+        const ov = r.OriginalValue || ''
+        const mv = r.ModifiedValue || ''
+        const ts = r.ts || r.timestamp || ''
+        lines.push(`${name} on packet ${pid}: ${mf} changed ${ov} → ${mv}${ts ? ' at '+humanTime(ts) : ''}`)
+        lines.push(`Source: ${r.src_ip || r.src || 'n/a'} → Dest: ${r.dst_ip || r.dst || 'n/a'}`)
+        showUser(lines)
+      } else {
+        showUser(['No attack details found'])
+      }
+    }
+
+    // Authentication helpers (added)
+    window.addEventListener('load', checkAuth)
+
+    async function checkAuth(){
+      try{
+        const r = await fetch('/api/auth-check', {credentials: 'include'})
+        const j = await r.json()
+        if(j.authenticated){ showApp() } else { showLogin() }
+      }catch(e){ console.warn('auth-check failed', e); showLogin() }
+    }
+
+    function showLogin(){
+      const lc = document.getElementById('loginCard')
+      const cc = document.getElementById('controlsCard')
+      const sp = document.getElementById('sqlPanel')
+      const logout = document.getElementById('authLogout')
+      if(lc) lc.style.display = 'block'
+      if(cc) cc.style.display = 'none'
+      if(sp) sp.style.display = 'none'
+      if(logout) logout.style.display = 'none'
+    }
+
+    function showApp(){
+      const lc = document.getElementById('loginCard')
+      const cc = document.getElementById('controlsCard')
+      const sp = document.getElementById('sqlPanel')
+      const logout = document.getElementById('authLogout')
+      if(lc) lc.style.display = 'none'
+      if(cc) cc.style.display = 'block'
+      if(sp) sp.style.display = 'block'
+      if(logout) logout.style.display = 'inline-block'
+    }
+
+    async function doLogin(){
+      const user = document.getElementById('loginUsername').value
+      const pass = document.getElementById('loginPassword').value
+      const msg = document.getElementById('loginMessage')
+      if(msg) msg.textContent = ''
+      try{
+        const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username: user, password: pass}), credentials: 'include'})
+        if(r.ok){ const j = await r.json(); if(j.success){ showApp(); if(msg) msg.textContent = 'Logged in'; return } }
+        const text = await r.text()
+        if(msg) msg.textContent = 'Login failed'
+        console.warn('login failed', text)
+      }catch(e){ if(msg) msg.textContent = 'Login error'; console.error(e) }
+    }
+
+    async function doLogout(){
+      try{
+        await fetch('/api/logout', {method:'POST', credentials:'include'})
+      }catch(e){ console.warn('logout error', e) }
+      showLogin()
+      showRaw('Logged out')
+      showUser(['Logged out'])
+    }
+
+  </script>
+</body>
+</html>
